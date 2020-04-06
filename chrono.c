@@ -1,8 +1,8 @@
 /*
  * chrono.c
- * Program for uC-based chronograph.
+ * Program for uC-based gun chronograph.
  * Created: 2019-05-06 14:33:47
- * Author : Luki
+ * Author : Łukasz Lesiecki
  */ 
 #define F_CPU 1000000UL
 
@@ -60,7 +60,7 @@ ISR(INT0_vect)  //INT0 PD2
 
 ISR(INT1_vect)  //INT1 PD3
 {
-	result = 300000/TCNT1;
+	result = 300000/TCNT1;//speed [m/s] = 30cm/TCNT1[us]
 }
 
 int main(void)
@@ -78,15 +78,15 @@ int main(void)
 	sei();//interrupts on
 	while(1)
 	{
-		digit = result % 10;
+		digit = result % 10;//1st digit
 		PORTB = (PORTB & 0b11100000) | digitPB[digit];
 		PORTD = (PORTD & 0b10001100) | digitPD[digit] | (1<<PD0) | (1<<PD1);
 		//_delay_ms(5);
-		digit = result/10 % 10;
+		digit = result/10 % 10;//2nd digit
 		PORTB = (PORTB & 0b11100000) | digitPB[digit];
 		PORTD = (PORTD & 0b10001100) | digitPD[digit] | (1<<PD0) | (1<<PD4);
 		//_delay_ms(5);
-		digit = result/100 % 10;
+		digit = result/100 % 10;//3rd digit
 		PORTB = (PORTB & 0b11100000) | digitPB[digit];
 		PORTD = (PORTD & 0b10001100) | digitPD[digit] | (1<<PD1) | (1<<PD4);
 		//_delay_ms(5);
