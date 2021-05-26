@@ -1,8 +1,8 @@
 # Microcontrollers
 My programs for AVR attiny & atmega microcontrollers
 # Electric Go-Kart
-![go_kart_photo-1](https://user-images.githubusercontent.com/37122127/119724567-2537e700-be6f-11eb-8e8a-4064c73166d0.jpg)
-![go_kart_photo-2](https://user-images.githubusercontent.com/37122127/119724620-3f71c500-be6f-11eb-8cdd-7b733aca5bde.jpg)
+![go_kart_photo-1](https://user-images.githubusercontent.com/37122127/119739391-756c7480-be82-11eb-98d0-3987bba829e4.jpg)
+![go_kart_photo-2](https://user-images.githubusercontent.com/37122127/119739400-79989200-be82-11eb-84da-e1c0915e7c00.jpg)
 ## Tasks performed by the gokart.c program
 * Reading state of the gas pedal
 * Reading state of the braking pedal
