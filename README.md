@@ -3,6 +3,14 @@ My programs for AVR attiny & atmega microcontrollers
 # Electric Go-Kart
 ![go_kart_photo-1](https://user-images.githubusercontent.com/37122127/119739391-756c7480-be82-11eb-98d0-3987bba829e4.jpg)
 ![go_kart_photo-2](https://user-images.githubusercontent.com/37122127/119739400-79989200-be82-11eb-84da-e1c0915e7c00.jpg)
+## Specification:
+* 2x250W DC motor
+* 22Ah, 25.9V Li-Ion battery
+* Self-made DC motor driver able to handle up to 200 Amps of current
+* Top speed: 18km / h
+* Range: ~ 14km
+* Video: [YouTube](https://youtu.be/nwERPI5T8nM)
+
 ## Tasks performed by the gokart.c program
 * Reading state of the gas pedal
 * Reading state of the braking pedal
