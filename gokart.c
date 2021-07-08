@@ -1,176 +1,280 @@
 /*
  * gokart.c
- * Program for uC-based electric go-kart.
- * Created: 2019-07-11 12:45:12
+ *
+ * Created: 2020-11-19 01:44:31
  * Author : Łukasz Lesiecki
  */ 
 #define F_CPU 1000000UL
-#define _NOP() do { __asm__ __volatile__ ("nop"); } while (0)//call _NOP() for really short delay
-#define DELAY_MULTIPLIER 11
 
-#define BRAKING 0
-#define ACCELERATION 1
-
-#define DRIVER_1 PA7
-#define DRIVER_2 PA5
-#define ENABLE PA6
-#define FWD PA3
-#define BWD PA4
-#define ACC PA0
-#define BRK PA1
+#define aiACC PORTC5
+#define aiBRK PORTC4
+#define diBWD PORTD0
+#define diLight PORTD1
+#define diNeon PORTD2
+#define diFWD PORTC1
+#define diL PORTC3
+#define diR PORTC2
+#define diSpeed PORTB4
+#define doNeon PORTB1
+#define doEnable PORTB2
+#define doLight PORTB0
+#define doR PORTB3
+#define doL PORTD7
+#define doStop PORTD6
+#define doFWD PORTD5
+#define doBWD PORTD3
+#define doBWD_indicator PORTC0
 
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
-/*
-volatile int adc_result;
-
-ISR(ADC_vect)
+struct Input
 {
-	//here ADSC is 0 again
-	adc_result = ADCL | (ADCH<<8);
+	volatile uint8_t * pin;
+	uint8_t mask;
+	int8_t delay;
+};
+
+const uint8_t TOP = F_CPU / 20000 - 1;//value of TOP for 20KHz frequency
+
+void fwd_set_duty(uint8_t duty)//duty cycle in % as parameter
+{
+	//set desired duty cycle; multiply first to improve accuracy
+	OCR0B = duty * TOP / 100;
+	//connect OC0B pin (PD5) to timer if duty cycle > 0, disconnect otherwise
+	TCCR0A = (TCCR0A & (~(1<<COM0B1))) | (!!duty<<COM0B1);
 }
-*/
 
-int get_adc()
+void enable_set_duty(uint8_t duty)//duty cycle in % as parameter
 {
-	unsigned int i = 0;
-	ADCSRA |= (1<<ADSC);//start conversion
-	while(!(ADCSRA & (1<<ADIF)) && i++ < 100);//wait for conversion to complete
-	if(!(ADCSRA & (1<<ADIF)))//if conversion fails
-		return -1;
-	ADCSRA &= ~(1<<ADIF);//clear conversion complete flag
-	return (ADCH<<8) | ADCL;
+	//set desired duty cycle; multiply first to improve accuracy
+	OCR1B = duty * TOP / 100;
+	//connect OC1B pin (PB2) to timer if duty cycle > 0, disconnect otherwise
+	TCCR1B = (TCCR1B & (~(1<<COM1B1))) | (!!duty<<COM1B1);
+}
+
+void bwd_set_duty(uint8_t duty)//duty cycle in % as parameter
+{
+	//set desired duty cycle; multiply first to improve accuracy
+	OCR2B = duty * TOP / 100;
+	//connect OC2B pin (PD3) to timer if duty cycle > 0, disconnect otherwise
+	TCCR2B = (TCCR2B & (~(1<<COM2B1))) | (!!duty<<COM2B1);
 }
 
 int main(void)
 {
-	//Timer/Counter0 settings:
-	DDRA |= (1<<DRIVER_1);//OC0B(PA7) pin as output
-	TCCR0A |= (1<<COM0B1);//
-	TCCR0A &= ~(1<<COM0B0);//non-inverting mode, output = OC0B pin
-	TCCR0A |= (1<<WGM01) | (1<<WGM00);//
-	TCCR0B |= (1<<WGM02);//fast PWM, TOP = OCR0A
-	TCCR0B &= ~((1<<CS02) | (1<<CS01));//
-	TCCR0B |= (1<<CS00);//clock source - clkI/O, no prescalling
-	OCR0A = F_CPU/20000;//PWM frequency ~20kHz
-	//OCR0B = 20*F_CPU/20000/100;//PWM duty cycle ~20%
-	//Timer/Counter1 settings:
-	DDRA |= (1<<DRIVER_2);//OC1B(PA5) pin as output
-	TCCR1A |= (1<<COM1B1);//
-	TCCR1A &= ~(1<<COM1B0);//non-inverting mode, output = OC1B pin
-	TCCR1A |= (1<<WGM11) | (1<<WGM10);//
-	TCCR1B |= (1<<WGM13) | (1<<WGM12);//fast PWM, TOP = OCR1A
-	TCCR1B &= ~((1<<CS12) | (1<<CS11));//
-	TCCR1B |= (1<<CS10);//clock source - clkI/O, no prescalling
-	OCR1A = F_CPU/20000;//PWM frequency ~20kHz
-	//OCR1B = 10*F_CPU/20000/100;//PWM duty cycle ~10%
-	//ADC settings:
-	PRR &= ~(1<<PRADC);//power the ADC
-	ADCSRA |= (1<<ADEN);//enable the ADC
-	ADMUX &= ~((1<<REFS1) | (1<<REFS0));//Vref = VCC
-	//ADCSRA |= (1<<ADIE);//interrupt when AD conversion is complete
-	ADCSRA |= (1<<ADPS2);//ADC clock precaller /16
-	//sei();//enable interrupts
-	DDRA |= (1<<ENABLE);//PA6 pin as output
-	unsigned int
-		input = BRAKING,
-		acceleration_value_x_10 = 0,
-		braking = 0,
-		fwd = 0,
-		bwd = 0;
-	int adc_result = 0;
-	while(1)
-	{
-		(input = !input) ? (ADMUX &= 0xC0) : (ADMUX |= 0x01);//input selection for ADC
-		adc_result = get_adc();
+	// outputs configuration:
+	DDRB |= (1<<doNeon) | (1<<doEnable) | (1<<doLight) | (1<<doR);
+	DDRC |= (1<<doBWD_indicator);
+	DDRD |= (1<<doBWD) | (1<<doFWD) | (1<<doStop) | (1<<doL);
+	
+	// pull-up configuration:
+	PORTB |= (1<<diSpeed);
+	PORTC |= (1<<diL) | (1<<diR) | (1<<diFWD);
+	PORTD |= (1<<diBWD) | (1<<diLight) | (1<<diNeon);
+	
+	// FWD PWM settings:
+	TCCR0A |= (1<<WGM00) | (1<<WGM01);//Fast PWM mode, non inverting
+	//Fast PWM mode, source = CLK-IO, no prescaller
+	TCCR0B |= (1<<WGM02) | (1<<CS00);
+	OCR0A = TOP;//PWM frequency ~20kHz
+	
+	// enable PWM settings:
+	//Fast PWM mode, non inverting, output at OC1B (PB2)
+	TCCR1A |= (1<<WGM10) | (1<<WGM11);
+	//Fast PWM mode, source = CLK-IO, no prescaller
+	TCCR1B |= (1<<WGM12) | (1<<WGM13) | (1<<CS10);
+	OCR1A = TOP;//PWM frequency ~20kHz
+	
+	// BWD PWM settings:
+	// Fast PWM mode, non inverting, output at OC2B (PD3)
+	TCCR2A |= (1<<WGM20) | (1<<WGM21);
+	// Fast PWM mode, source = CLK-IO, no prescaller
+	TCCR2B |= (1<<WGM22) | (1<<CS20);
+	OCR2A = TOP;//PWM frequency ~20kHz
+	
+	// Analog/Digital Converter settings:
+	// Vref = AVcc, ADC4 as input, conversion result left adjusted
+	ADMUX |= (1<<REFS0) | (1<<MUX2) |(1<<ADLAR);
+	// enable ADC, start conversion, 16x prescaller
+	ADCSRA |= (1<<ADEN) | (1<<ADPS2);
+	
+	const uint8_t lower_limit = 50;
+	const uint8_t upper_limit = 200;
+	uint8_t fwd = 0;
+	uint8_t bwd = 0;
+	uint8_t turn_signal_L = 0;
+	uint8_t turn_signal_R = 0;
+	uint8_t turn_signal_period = 199;
+	uint8_t turn_signal_state = 0;
+	//anti-idiot, who switch into drive mode,
+	//while holding acceleration pedal pushed :D
+	uint8_t acceleration_lock = 1;
+	const uint8_t debounce_delay = 60;//max delay between key presses
+	struct Input inputs[] = {
+		{ &PINC,	PINC, 0},
+		{ &PIND,	PIND, 0},
+		{ &PINC,	PINC, 0},
+		{ &PINC,	PINC, 0},
+		{ &PIND,	PIND, 0},
+		{ &PIND,	PIND, 0},
+	};
+	
+    while (1) 
+    {
+		uint8_t brake;
+		uint8_t accelerate;
+		ADMUX &= ~(1<<MUX0);//ADC4 as input
+		ADCSRA |= (1<<ADSC);//start conversion
+		while(!(ADCSRA & (1<<ADIF)));//wait until ADC Interrupt Flag is set
+		ADCSRA &= ~(1<<ADIF);//clear conversion complete flag
+		brake = ADCH;//get the conversion result
+		ADMUX |= (1<<MUX0);//ADC5 as input
+		ADCSRA |= (1<<ADSC);//start conversion
+		while(!(ADCSRA & (1<<ADIF)));//wait until ADC Interrupt Flag is set
+		ADCSRA &= ~(1<<ADIF);//clear conversion complete flag
+		accelerate = ADCH;//get the conversion result
 		
-		if(adc_result < 0)//if ADC error
+		//unlock acceleration when pedal is released
+		if(accelerate < lower_limit)
+			acceleration_lock = 0;
+		
+		if(acceleration_lock)//don't accelerate, when protection is active
+			accelerate = 0;
+		
+		if(brake > lower_limit)//regenerative braking mode
 		{
-			input = BRAKING;//max braking
-			adc_result = 1000;
+			fwd_set_duty(0);
+			bwd_set_duty(0);
+			enable_set_duty((brake - lower_limit) * 100
+				/ (upper_limit - lower_limit)
+				);
 		}
-		
-		if(input == BRAKING)
-			braking = adc_result;
-		
-		while(braking > 200)//braking mode
+		else if(accelerate > upper_limit)//input error, emergency brake
 		{
-			TCCR0B &= ~(1<<CS00);//no clock source (Timer/Counter0 stopped)
-			PORTA &= ~(1<<DRIVER_1);//output low (0% duty cycle)
-			TCCR1B &= ~(1<<CS00);//no clock source (Timer/Counter1 stopped)
-			PORTA &= ~(1<<DRIVER_2);//output low (0% duty cycle)
-			if(braking > 800)
-				PORTA |= (1<<ENABLE);//enable the motor driver
-			else
+			fwd_set_duty(0);
+			bwd_set_duty(0);
+			enable_set_duty(100);
+		}
+		else if(accelerate > lower_limit)//normal drive mode
+		{
+			uint8_t duty_cycle =
+				(accelerate - lower_limit) * 100
+				/ (upper_limit - lower_limit);
+			if(fwd)//drive forwards
 			{
-				int i;
-				for(i = 0; i < 1000; i++)//50ms of braking, ~20kHz PWM signal generation
+				fwd_set_duty(duty_cycle);
+				bwd_set_duty(0);
+				enable_set_duty(100);
+			}
+			else if(bwd)//reverse
+			{
+				fwd_set_duty(0);
+				bwd_set_duty(duty_cycle);
+				enable_set_duty(100);
+			}
+			else//neutral
+			{
+				fwd_set_duty(0);
+				bwd_set_duty(0);
+				enable_set_duty(0);
+			}
+		}
+		else//neutral
+		{
+			fwd_set_duty(0);
+			bwd_set_duty(0);
+			enable_set_duty(0);
+		}
+
+		if(++turn_signal_state > turn_signal_period)
+			turn_signal_state = 0;
+		
+		for (int input_number = 0;
+			input_number < sizeof(inputs) / sizeof(struct Input);
+			++input_number
+			)
+		{
+			//high state = pulled up = button released
+			if(*inputs[input_number].pin & inputs[input_number].mask)
+			{
+				if(--inputs[input_number].delay < 0)
+					inputs[input_number].delay = 0;
+			}
+			else//low state = pulled down = button pressed
+			{
+				if(!inputs[input_number].delay)
 				{
-					unsigned char delay = braking/(1023/DELAY_MULTIPLIER) + 1;
-					while(--delay)
-						_NOP();
-					PORTA &= ~(1<<ENABLE);//disable the motor driver
-					delay = DELAY_MULTIPLIER - braking/(1023/DELAY_MULTIPLIER) + 1;
-					while(--delay)
-						_NOP();
-					PORTA |= (1<<ENABLE);//enable the motor driver
+					inputs[input_number].delay = debounce_delay;
+					switch(input_number)
+					{
+						case 0:
+							bwd = 0;
+							PORTC &= ~(1<<doBWD_indicator);
+							fwd ^= 1;
+							acceleration_lock = 1;
+						break;
+						case 1:
+							fwd = 0;
+							PORTC ^= (1<<doBWD_indicator);
+							bwd ^= 1;
+							acceleration_lock = 1;
+						break;
+						case 2:
+							if(!(turn_signal_L || turn_signal_R))
+								turn_signal_state = 0;
+							turn_signal_L ^= 1;
+						break;
+						case 3:
+							if(!(turn_signal_L || turn_signal_R))
+								turn_signal_state = 0;
+							turn_signal_R ^= 1;
+						break;
+						case 4:
+							PORTB ^= (1<<doLight);
+						break;
+						case 5:
+							PORTB ^= (1<<doNeon);
+						break;
+					}
 				}
 			}
-			
-			adc_result = get_adc();
-			
-			if(adc_result < 0)
-				braking = 1000;//max braking if an error occurs
-			else
-				braking = adc_result;
-			continue;
 		}
 		
-		if(input == ACCELERATION && braking < 200)//normal drive mode
+		if(turn_signal_L)
 		{
-			if(acceleration_value_x_10 < adc_result*10)
-				acceleration_value_x_10 = adc_result*10;//accelerate immediately
-			else if(acceleration_value_x_10 > 100)
-				acceleration_value_x_10 -= 2;//decelerate slowly
-			
-			if(adc_result < 200)//no acceleration
+			if(turn_signal_state < turn_signal_period/2)
 			{
-				PORTA &= ~(1<<ENABLE);//shut down the motor driver
-				
-				fwd = PINA & (1<<FWD);//check for direction change
-				bwd = PINA & (1<<BWD);//check for direction change
+				PORTD |= (1<<doL);
 			}
-			
-			if(!bwd != !fwd)
+			else
 			{
-				fwd = bwd = 0;
-				TCCR0B &= ~(1<<CS00);//no clock source (Timer/Counter0 stopped)
-				TCCR1B &= ~(1<<CS00);//no clock source (Timer/Counter1 stopped)
-				PORTA &= ~(1<<DRIVER_2);//output low (0% duty cycle)
-				PORTA &= ~(1<<DRIVER_1);//output low (0% duty cycle)
-			}
-			
-			if(fwd)
-			{
-				//generate PWM signal for forward half-bridge:
-				TCCR0B |= (1<<CS00);//clock source - clkI/O, no prescalling
-				OCR0B = acceleration_value_x_10*F_CPU/10/1023/20000;//PWM duty cycle = adc/adc_max
-				//continous LOW for backward half-bridge:
-				TCCR1B &= ~(1<<CS00);//no clock source (Timer/Counter0 stopped)
-				PORTA &= ~(1<<DRIVER_2);//output low (0% duty cycle)
-			}
-			
-			if(bwd)
-			{
-				//generate PWM signal for backward half-bridge:
-				TCCR1B |= (1<<CS00);//clock source - clkI/O, no prescalling
-				OCR1B = acceleration_value_x_10*F_CPU/10/1023/20000;//PWM duty cycle = adc/adc_max
-				//continous LOW for forward half-bridge:
-				TCCR0B &= ~(1<<CS00);//no clock source (Timer/Counter0 stopped)
-				PORTA &= ~(1<<DRIVER_1);//output low (0% duty cycle)
+				PORTD &= ~(1<<doL);
 			}
 		}
-	}
+		else
+		{
+			PORTD &= ~(1<<doL);
+		}
+			
+			
+		if(turn_signal_R)
+		{
+			if(turn_signal_state < turn_signal_period/2)
+			{
+				PORTB |= (1<<doR);
+			}
+			else
+			{
+				PORTB &= ~(1<<doR);
+			}
+		}
+		else
+		{
+			PORTB &= ~(1<<doR);
+		}
+			
+		_delay_ms(2);
+    }
 }
