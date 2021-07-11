@@ -38,6 +38,15 @@ struct Input
 	volatile uint8_t * pin;
 	uint8_t mask;
 	int8_t delay;
+	uint8_t state;
+};
+
+struct Drive
+{
+	// limits of readings from the analog acceleration and brake inputs
+	const uint8_t pedal_min;
+	const uint8_t pedal_max;
+	const uint8_t pedal_error_limit;
 };
 
 const uint8_t TOP = F_CPU / 20000 - 1;// value of TOP for 20KHz frequency
@@ -55,7 +64,7 @@ void enable_set_duty(uint8_t duty)//duty cycle in % as parameter
 	// set desired duty cycle; multiply first to improve accuracy
 	OCR1B = duty * TOP / 100;
 	// connect OC1B pin (PB2) to timer if duty cycle > 0, disconnect otherwise
-	TCCR1B = (TCCR1B & (~(1<<COM1B1))) | (!!duty<<COM1B1);
+	TCCR1A = (TCCR1A & (~(1<<COM1B1))) | (!!duty<<COM1B1);
 }
 
 void bwd_set_duty(uint8_t duty)//duty cycle in % as parameter
@@ -63,7 +72,7 @@ void bwd_set_duty(uint8_t duty)//duty cycle in % as parameter
 	// set desired duty cycle; multiply first to improve accuracy
 	OCR2B = duty * TOP / 100;
 	// connect OC2B pin (PD3) to timer if duty cycle > 0, disconnect otherwise
-	TCCR2B = (TCCR2B & (~(1<<COM2B1))) | (!!duty<<COM2B1);
+	TCCR2A = (TCCR2A & (~(1<<COM2B1))) | (!!duty<<COM2B1);
 }
 
 void configure_registers()
@@ -104,22 +113,160 @@ void configure_registers()
 	ADCSRA |= (1<<ADEN) | (1<<ADPS2);
 }
 
+uint8_t get_ADC_result(uint8_t * result)
+{
+	ADCSRA |= (1<<ADSC);// start conversion
+	uint8_t iter_limit = 50;// create an iterations limit
+	// wait until ADC Interrupt Flag is set or the iterations limit is reached
+	while(!(ADCSRA & (1<<ADIF)) && --iter_limit > 0);
+	ADCSRA &= ~(1<<ADIF);// clear ADC Interrupt Flag
+	*result = ADCH;// get the conversion result
+	return iter_limit;// later we can check if the iterations limit was reached
+}
+
+void set_error_indicator()
+{
+	
+}
+
+uint8_t set_driving_state(struct Drive * drive, struct Input * inputs, uint8_t accelerate, uint8_t brake)
+{
+	if(brake > drive->pedal_min)// regenerative braking mode
+	{
+		fwd_set_duty(0);
+		bwd_set_duty(0);
+		enable_set_duty((brake - drive->pedal_min) * 100
+		/ (drive->pedal_max - drive->pedal_min)
+		);
+	}
+	else if(accelerate > drive->pedal_error_limit)// input error, emergency brake
+	{
+		fwd_set_duty(0);
+		bwd_set_duty(0);
+		enable_set_duty(100);
+		return 1;
+	}
+	else if(accelerate > drive->pedal_min)// normal drive mode
+	{
+		// calculating the desired duty cycle,
+		// based on the acceleration pedal readings
+		uint8_t duty_cycle =
+		(accelerate - drive->pedal_min) * 100
+		/ (drive->pedal_max - drive->pedal_min);
+		
+		if(inputs[0].state)// drive forwards
+		{
+			fwd_set_duty(duty_cycle);
+			bwd_set_duty(0);
+			enable_set_duty(100);
+		}
+		else if(inputs[1].state)// reverse
+		{
+			fwd_set_duty(0);
+			// yes, it can reverse as fast as driving forwards :D
+			bwd_set_duty(duty_cycle);
+			enable_set_duty(100);
+		}
+		else// neutral
+		{
+			fwd_set_duty(0);
+			bwd_set_duty(0);
+			enable_set_duty(0);
+		}
+	}
+	else// neutral
+	{
+		fwd_set_duty(0);
+		bwd_set_duty(0);
+		enable_set_duty(0);
+	}
+	return 0;
+}
+
+void handle_inputs(struct Input * inputs, uint8_t * acceleration_lock, const uint8_t debounce_delay)
+{	
+	for (uint8_t input_number = 0;
+	input_number < 6;
+	++input_number
+	)
+	{
+		// high state = pulled up = button released
+		if(*(inputs[input_number].pin) & inputs[input_number].mask)
+		{
+			if(inputs[input_number].delay > 0)
+			--inputs[input_number].delay;
+		}
+		else// low state = pulled down = button pressed
+		{
+			if(!inputs[input_number].delay)
+			{
+				inputs[input_number].delay = debounce_delay;
+				switch(input_number)
+				{
+					case 0:
+					inputs[1].state = 0;
+					PORTC &= ~(1<<doBWD_indicator);
+					inputs[0].state ^= 1;
+					*acceleration_lock = 1;
+					break;
+					case 1:
+					inputs[0].state = 0;
+					PORTC ^= (1<<doBWD_indicator);
+					inputs[1].state ^= 1;
+					*acceleration_lock = 1;
+					break;
+					case 2:
+					inputs[2].state ^= 1;
+					break;
+					case 3:
+					inputs[3].state ^= 1;
+					break;
+					case 4:
+					PORTB ^= (1<<doLight);
+					break;
+					case 5:
+					PORTB ^= (1<<doNeon);
+					break;
+				}
+			}
+		}
+	}
+}
+
+void handle_turn_signals(struct Input * inputs, uint8_t * turn_signal_state)
+{
+	// period of the turn signal, the target frequency is 1.5Hz
+	const uint8_t turn_signal_period = 199;
+	//turn signals handling
+	if(++(*turn_signal_state) > turn_signal_period)
+	turn_signal_state = 0;
+			
+	if(inputs[2].state)
+	{
+		if(*turn_signal_state < turn_signal_period / 2)
+			PORTD |= (1<<doL);
+		else
+			PORTD &= ~(1<<doL);
+	}
+	else
+		PORTD &= ~(1<<doL);
+			
+	if(inputs[3].state)
+	{
+		if(*turn_signal_state < turn_signal_period / 2)
+			PORTB |= (1<<doR);
+		else
+			PORTB &= ~(1<<doR);
+	}
+	else
+		PORTB &= ~(1<<doR);
+}
+
 int main(void)
 {
 	configure_registers();
 	
-	// limits of readings from the analog acceleration input
-	const uint8_t lower_limit = 50;
-	const uint8_t upper_limit = 200;
-	
-	// period of the turn signal, the target frequency is 1.5Hz
-	const uint8_t turn_signal_period = 199;
-	
-	// variables for storing the state of direction and turn signals
-	uint8_t fwd = 0;
-	uint8_t bwd = 0;
-	uint8_t turn_signal_L = 0;
-	uint8_t turn_signal_R = 0;
+	// variable for storing the state of turn signal
 	uint8_t turn_signal_state = 0;
 	
 	// anti-idiot protection, who switch into drive mode,
@@ -128,161 +275,53 @@ int main(void)
 	
 	const uint8_t debounce_delay = 60;//delay for debouncing
 	
+	struct Drive drive = {
+		// treat the first one third of a pedal as 0%
+		255 / 3,
+		// treat the last one third of a pedal as 100%
+		255 * 2 / 3,
+		// define a value that will be treated as an input error
+		220
+		};
+	
 	struct Input inputs[] = {
-		{ &PINC, diFWD,		0},// FWD
-		{ &PIND, diBWD,		0},// BWD
-		{ &PINC, diL,		0},// turn signal left
-		{ &PINC, diR,		0},// turn signal right
-		{ &PIND, diLight,	0},// lights
-		{ &PIND, diNeon,	0},// neon
+		//PIN pointer, PORT mask, debounce, state
+		{ &PINC, (1<<diFWD),	0, 0},// FWD
+		{ &PIND, (1<<diBWD),	0, 0},// BWD
+		{ &PINC, (1<<diL),		0, 0},// turn signal left
+		{ &PINC, (1<<diR),		0, 0},// turn signal right
+		{ &PIND, (1<<diLight),	0, 0},// lights
+		{ &PIND, (1<<diNeon),	0, 0},// neon
 	};
 	
     while (1) 
     {
 		uint8_t brake;
 		uint8_t accelerate;
+		
 		ADMUX &= ~(1<<MUX0);// ADC4 as input
-		ADCSRA |= (1<<ADSC);// start conversion
-		while(!(ADCSRA & (1<<ADIF)));// wait until ADC Interrupt Flag is set
-		ADCSRA &= ~(1<<ADIF);// clear conversion complete flag
-		brake = ADCH;// get the conversion result
+		if(!get_ADC_result(&brake))
+			// signalize an error, if the iterations limit was reached
+			set_error_indicator();
 		ADMUX |= (1<<MUX0);// ADC5 as input
-		ADCSRA |= (1<<ADSC);// start conversion
-		while(!(ADCSRA & (1<<ADIF)));// wait until ADC Interrupt Flag is set
-		ADCSRA &= ~(1<<ADIF);// clear conversion complete flag
-		accelerate = ADCH;// get the conversion result
+		if(!get_ADC_result(&accelerate))
+			// signalize an error, if the iterations limit was reached
+			set_error_indicator();                                                                                                                                                                                                                   
 		
 		// unlock acceleration when pedal is released
-		if(accelerate < lower_limit)
+		if(accelerate < drive.pedal_min)
 			acceleration_lock = 0;
 		
-		if(acceleration_lock)// don't accelerate, when protection is active
+		if(acceleration_lock)// don't accelerate, when the protection is active
 			accelerate = 0;
 		
-		if(brake > lower_limit)// regenerative braking mode
-		{
-			fwd_set_duty(0);
-			bwd_set_duty(0);
-			enable_set_duty((brake - lower_limit) * 100
-				/ (upper_limit - lower_limit)
-				);
-		}
-		else if(accelerate > upper_limit)// input error, emergency brake
-		{
-			fwd_set_duty(0);
-			bwd_set_duty(0);
-			enable_set_duty(100);
-		}
-		else if(accelerate > lower_limit)// normal drive mode
-		{
-			// calculating the desired duty cycle, 
-			// based on the acceleration pedal readings
-			uint8_t duty_cycle =
-				(accelerate - lower_limit) * 100
-				/ (upper_limit - lower_limit);
-				
-			if(fwd)// drive forwards
-			{
-				fwd_set_duty(duty_cycle);
-				bwd_set_duty(0);
-				enable_set_duty(100);
-			}
-			else if(bwd)// reverse
-			{
-				fwd_set_duty(0);
-				// yes, it can reverse as fast as driving forwards :D
-				bwd_set_duty(duty_cycle);
-				enable_set_duty(100);
-			}
-			else// neutral
-			{
-				fwd_set_duty(0);
-				bwd_set_duty(0);
-				enable_set_duty(0);
-			}
-		}
-		else//neutral
-		{
-			fwd_set_duty(0);
-			bwd_set_duty(0);
-			enable_set_duty(0);
-		}
-
-		if(++turn_signal_state > turn_signal_period)
-			turn_signal_state = 0;
+		// signalize an error, if the pedal signal limit was exceeded
+		if(set_driving_state(&drive, inputs, accelerate, brake))
+			set_error_indicator();
 		
-		for (uint8_t input_number = 0;
-			input_number < sizeof(inputs) / sizeof(inputs[0]);
-			++input_number
-			)
-		{
-			// high state = pulled up = button released
-			if(*inputs[input_number].pin & inputs[input_number].mask)
-			{
-				if(inputs[input_number].delay > 0)
-					--inputs[input_number].delay;
-			}
-			else// low state = pulled down = button pressed
-			{
-				if(!inputs[input_number].delay)
-				{
-					inputs[input_number].delay = debounce_delay;
-					switch(input_number)
-					{
-						case 0:
-							bwd = 0;
-							PORTC &= ~(1<<doBWD_indicator);
-							fwd ^= 1;
-							acceleration_lock = 1;
-						break;
-						case 1:
-							fwd = 0;
-							PORTC ^= (1<<doBWD_indicator);
-							bwd ^= 1;
-							acceleration_lock = 1;
-						break;
-						case 2:
-							if(!(turn_signal_L || turn_signal_R))
-								turn_signal_state = 0;
-							turn_signal_L ^= 1;
-						break;
-						case 3:
-							if(!(turn_signal_L || turn_signal_R))
-								turn_signal_state = 0;
-							turn_signal_R ^= 1;
-						break;
-						case 4:
-							PORTB ^= (1<<doLight);
-						break;
-						case 5:
-							PORTB ^= (1<<doNeon);
-						break;
-					}
-				}
-			}
-		}
+		handle_inputs(inputs, &acceleration_lock, debounce_delay);
 		
-		//turn signals handling
-		if(turn_signal_L)
-		{
-			if(turn_signal_state < turn_signal_period/2)
-				PORTD |= (1<<doL);
-			else
-				PORTD &= ~(1<<doL);
-		}
-		else
-			PORTD &= ~(1<<doL);
-			
-			
-		if(turn_signal_R)
-		{
-			if(turn_signal_state < turn_signal_period/2)
-				PORTB |= (1<<doR);
-			else
-				PORTB &= ~(1<<doR);
-		}
-		else
-			PORTB &= ~(1<<doR);
+		handle_turn_signals(inputs, &turn_signal_state);
 			
 		_delay_ms(2);
     }
