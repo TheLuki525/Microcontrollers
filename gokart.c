@@ -28,6 +28,7 @@
 #define doEnable PORTB2
 #define doFWD PORTD5
 #define doBWD PORTD3
+#define doErr PORTB4
 
 #include <avr/io.h>
 #include <util/delay.h>
@@ -78,7 +79,7 @@ void bwd_set_duty(uint8_t duty)//duty cycle in % as parameter
 void configure_registers()
 {
 	// outputs configuration:
-	DDRB |= (1<<doNeon) | (1<<doEnable) | (1<<doLight) | (1<<doR);
+	DDRB |= (1<<doNeon) | (1<<doEnable) | (1<<doLight) | (1<<doR) | (1<<doErr);
 	DDRC |= (1<<doBWD_indicator);
 	DDRD |= (1<<doStop) | (1<<doL) | (1<<doFWD) | (1<<doBWD);
 	
@@ -126,7 +127,7 @@ uint8_t get_ADC_result(uint8_t * result)
 
 void set_error_indicator()
 {
-	
+	PORTB |= (1<<doErr);
 }
 
 uint8_t set_driving_state(struct Drive * drive, struct Input * inputs, uint8_t accelerate, uint8_t brake)
