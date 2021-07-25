@@ -1,8 +1,8 @@
 # Microcontrollers
 My programs for AVR attiny & atmega microcontrollers
 # Electric Go-Kart
-![go_kart_photo-1](https://user-images.githubusercontent.com/37122127/119739391-756c7480-be82-11eb-98d0-3987bba829e4.jpg)
-![go_kart_photo-2](https://user-images.githubusercontent.com/37122127/119739400-79989200-be82-11eb-84da-e1c0915e7c00.jpg)
+![20210725_212951](https://user-images.githubusercontent.com/37122127/126917548-9342f97b-d21c-4d45-8655-7d04908fee9e.jpg)
+![20210725_212924](https://user-images.githubusercontent.com/37122127/126917552-bf20f786-02de-42e2-8639-851dd741d279.jpg)
 ## Specification:
 * 2x250W DC motor
 * 22Ah, 25.9V Li-Ion battery
