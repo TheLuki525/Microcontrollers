@@ -10,6 +10,8 @@ My programs for AVR attiny & atmega microcontrollers
 * Top speed: 18km / h
 * Range: ~ 14km
 * Video: [YouTube](https://youtu.be/nwERPI5T8nM)
+## PCB Design:
+<img src="https://user-images.githubusercontent.com/37122127/127546074-ef68bacd-b857-43dc-9103-a47f0e66f346.png" height="480">
 
 ## Tasks performed by the gokart.c program
 * Reading state of the gas pedal
