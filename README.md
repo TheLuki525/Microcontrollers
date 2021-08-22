@@ -9,7 +9,7 @@ My programs for AVR attiny & atmega microcontrollers
 * Self-made DC motor driver able to handle up to 200 Amps of current
 * Top speed: 18km / h
 * Range: ~ 14km
-* Video: [YouTube](https://youtu.be/nwERPI5T8nM)
+* Video: [YouTube](https://www.youtube.com/watch?v=RKbUvhVg5Dk)
 ## PCB Design:
 <img src="https://user-images.githubusercontent.com/37122127/127546074-ef68bacd-b857-43dc-9103-a47f0e66f346.png" height="480">
 
